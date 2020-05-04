@@ -3,19 +3,21 @@ import re
 import pickle
 from sqlalchemy import create_engine
 import pandas as pd
-from nltk.tokenize import word_tokenize
+from nltk.tokenize import word_tokenize, sent_tokenize
+from nltk import pos_tag
 from nltk.stem import WordNetLemmatizer
 from nltk.corpus import stopwords
 from sklearn.metrics import classification_report
 from sklearn.model_selection import GridSearchCV
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import LinearSVC
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline, FeatureUnion
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer
 from sklearn.multioutput import MultiOutputClassifier
 import nltk
-nltk.download('stopwords')
+nltk.download(['punkt', 'wordnet', 'averaged_perceptron_tagger', 'stopwords'])
+
 
 
 def load_data(database_filepath):
@@ -26,8 +28,9 @@ def load_data(database_filepath):
     # connect db adn read data
     engine = create_engine('sqlite:///{}'.format(database_filepath))
     df = pd.read_sql('SELECT * from DisasterMessages', engine)
-
-    category_names = df.columns[-36:].tolist()
+    # drop this col because it's all zeros and the classifier model cannot run
+    df = df.drop('child_alone', axis=1)
+    category_names = df.columns[-35:].tolist()
     X = df['message'].values
     y = df.iloc[:, 4:].values
     return X, y, category_names
@@ -53,22 +56,25 @@ def tokenize(text):
         clean_token.append(lemmatizer.lemmatize(token, pos='v').lower().strip())
     return clean_token
 
-class WordCount(BaseEstimator, TransformerMixin):
-    """ Custom transformer to count the number of words in text
+class VerbCount(BaseEstimator, TransformerMixin):
+    """ Custom transformer to count the number of verbs in text
     """
-    def word_count(self, text):
+    def verb_count(self, text):
         text = re.sub(r'[^a-zA-Z0-9]', ' ', text)
         # tokenize the word into words
-        tokens = word_tokenize(text)
-        return len(tokens)
+        tokens = pos_tag(word_tokenize(text))
+        count = 0
+        for word, tag in pos_tag(word_tokenize(text)):
+            if tag in ('VBP', 'VB'):
+                count+=1
+        return count
 
     def fit(self, X, y=None):
         return self
 
     def transform(self, X):
-        counts = pd.Series(X).apply(self.word_count)
+        counts = pd.Series(X).apply(self.verb_count)
         return pd.DataFrame(counts)
-
 
 def build_model():
     """
@@ -78,19 +84,15 @@ def build_model():
         Fitted Adaboostclassifer.
     """
     pipeline = Pipeline([
-        ('features', FeatureUnion([
-            ('count', WordCount()),
-            ('text_pipeline', Pipeline([
-                ('vect', CountVectorizer(tokenizer=tokenize)),
-                ('tfidf', TfidfTransformer())
-                ]))
-                ])),
-        ('clf', MultiOutputClassifier(estimator=RandomForestClassifier()))
+        ('vect', CountVectorizer(tokenizer=tokenize)),
+        ('tfidf', TfidfTransformer()),
+        ('clf', MultiOutputClassifier(estimator=LinearSVC(max_iter=10000)))
     ])
     parameters = {
-        'clf__estimator__n_estimators': [50, 100, 200],
-        'clf__estimator__min_samples_split': [2, 4, 6],
-        'features__text_pipeline__tfidf__use_idf': (True, False)
+        #'clf__estimator__n_estimators': [50, 100],
+        #'clf__estimator__min_samples_split': [2, 5]
+        'clf__estimator__C': [1, 10],
+        'clf__estimator__max_iter': [1000, 100000]
     }
 
     cv = GridSearchCV(pipeline, param_grid=parameters)
@@ -105,8 +107,9 @@ def evaluate_model(cv, X_test, y_test, category_names):
         category_names
     return: classification report
     """
-    for i in range(36):
-        print(labels[i])
+    y_pred = cv.predict(X_test)
+    for i in range(35):
+        print(category_names[i])
         print(classification_report(y_test[:,i], y_pred[:,i]))
     print('\nBest Parameters:', cv.best_params_)
 
