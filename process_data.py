@@ -5,9 +5,9 @@ from sqlalchemy import create_engine
 
 def load_data(messages_filepath, categories_filepath):
     """ load message and categories file, merge and store in a dataframe
-    Input:
+    Args:
     filepath of messages.csv  and categories.csv
-    Output:
+    Return:
     merged dataframe
     """
     messages = pd.read_csv(messages_filepath)
@@ -17,9 +17,9 @@ def load_data(messages_filepath, categories_filepath):
 
 def clean_data(categories, df):
     """ clean the merged dataframe
-    Input:
+    Arg:
     data(df)
-    Output:
+    Return:
     cleaned df with seperate columns for each category and no duplicates
     """
     # split category into seperate columns
@@ -38,17 +38,22 @@ def clean_data(categories, df):
     # generate cleaned df
     df = pd.concat([df, categories], axis=1)
     df.drop('categories', axis=1, inplace=True)
+    # remove duplicates
+    df.drop_duplicates(inplace=True)
+    # remove null columns
+    df = df.dropna(subset=['related'])
     return df
 
 def save_data(df, database_filepath):
     """ save cleaned dataframe into sqlAchemy database
-    Input:
+    Args:
     df, database name
-    Output:
+    Return:
     saved db file
     """
     engine = create_engine('sqlite:///{}'.format(database_filepath))
     df.to_sql('DisasterMessages', engine, if_exists='replace', index=False)
+
 
 def main():
     print(sys.argv)
